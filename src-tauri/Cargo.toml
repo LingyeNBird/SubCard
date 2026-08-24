@@ -1,0 +1,29 @@
+[package]
+name = "subcard"
+version = "0.1.0"
+description = "Subcard, a compact Sub2Pool participant quota card for the system tray"
+authors = ["LingyeNBird"]
+edition = "2021"
+license = "AGPL-3.0-only"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "subcard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+keyring = "4.1.6"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "system-proxy"] }
+

@@ -1,0 +1,29 @@
+{
+  "name": "subcard",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "description": "Subcard, a native system tray client for Sub2Pool participant cards",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "vue": "3.5.40"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "26.1.2",
+    "@vitejs/plugin-vue": "6.0.8",
+    "daisyui": "5.7.15",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.0",
+    "vue-tsc": "3.3.9"
+  }
+}
