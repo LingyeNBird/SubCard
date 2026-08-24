@@ -27,3 +27,8 @@ tauri-plugin-autostart = "2"
 keyring = "4.1.6"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "system-proxy"] }
 
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true
