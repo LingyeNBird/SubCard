@@ -3,6 +3,10 @@ use reqwest::{Client, Url};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::time::Duration;
 
+const PARTICIPANTS_PATH: &str = "/api/v1/participants";
+const RECOMMENDATIONS_PATH: &str = "/api/v1/recommendations";
+const APPLY_RECOMMENDATION_PATH: &str = "/api/v1/recommendations/{participant_id}/apply";
+
 #[derive(Debug, Deserialize)]
 struct ApiEnvelope<T> {
     ok: bool,
@@ -13,6 +17,41 @@ struct ApiEnvelope<T> {
 #[derive(Debug, Deserialize)]
 struct RecommendationIdentity {
     id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiIndex {
+    endpoints: Vec<ApiEndpoint>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiEndpoint {
+    method: String,
+    path: String,
+}
+
+impl ApiIndex {
+    fn supports(&self, method: &str, path: &str) -> bool {
+        self.endpoints
+            .iter()
+            .any(|endpoint| endpoint.method.eq_ignore_ascii_case(method) && endpoint.path == path)
+    }
+
+    fn validate_participant_access(&self) -> Result<(), String> {
+        if self.supports("GET", PARTICIPANTS_PATH) {
+            Ok(())
+        } else {
+            Err(
+                "当前 API Key 没有读取参与者的权限。请让管理员为该系统用户开放“参与者”页面，并配置至少一个可见参与者。"
+                    .to_string(),
+            )
+        }
+    }
+
+    fn can_apply_recommendations(&self) -> bool {
+        self.supports("GET", RECOMMENDATIONS_PATH)
+            && self.supports("POST", APPLY_RECOMMENDATION_PATH)
+    }
 }
 
 pub fn normalize_base_url(value: &str) -> Result<String, String> {
@@ -69,20 +108,32 @@ pub async fn fetch_card_data(
     token: &str,
 ) -> Result<(Vec<ParticipantCardData>, Vec<i64>), String> {
     let client = build_client()?;
+    let api_index: ApiIndex = fetch_collection(
+        &client,
+        format!("{base_url}/api/v1"),
+        token,
+        "Sub2Pool 响应缺少 API 能力信息",
+    )
+    .await?;
+    api_index.validate_participant_access()?;
     let participants = fetch_collection(
         &client,
-        format!("{base_url}/api/v1/participants"),
+        format!("{base_url}{PARTICIPANTS_PATH}"),
         token,
         "Sub2Pool 响应缺少参与者数据",
     )
     .await?;
-    let recommendations: Vec<RecommendationIdentity> = fetch_collection(
-        &client,
-        format!("{base_url}/api/v1/recommendations"),
-        token,
-        "Sub2Pool 响应缺少待应用建议数据",
-    )
-    .await?;
+    let recommendations: Vec<RecommendationIdentity> = if api_index.can_apply_recommendations() {
+        fetch_collection(
+            &client,
+            format!("{base_url}{RECOMMENDATIONS_PATH}"),
+            token,
+            "Sub2Pool 响应缺少待应用建议数据",
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
     Ok((
         participants,
         recommendations.into_iter().map(|item| item.id).collect(),
@@ -119,7 +170,10 @@ pub async fn apply_participant_recommendation(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_base_url;
+    use super::{
+        normalize_base_url, ApiEndpoint, ApiIndex, APPLY_RECOMMENDATION_PATH, PARTICIPANTS_PATH,
+        RECOMMENDATIONS_PATH,
+    };
 
     #[test]
     fn normalizes_subpath_without_leaking_url_credentials() {
@@ -129,5 +183,40 @@ mod tests {
         );
         assert!(normalize_base_url("https://admin:secret@pool.example.com").is_err());
         assert!(normalize_base_url("file:///tmp/sub2pool").is_err());
+    }
+
+    fn api_index(endpoints: &[(&str, &str)]) -> ApiIndex {
+        ApiIndex {
+            endpoints: endpoints
+                .iter()
+                .map(|(method, path)| ApiEndpoint {
+                    method: (*method).to_string(),
+                    path: (*path).to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn system_user_cards_stay_read_only_from_discovered_capabilities() {
+        let system_user = api_index(&[("GET", PARTICIPANTS_PATH), ("GET", RECOMMENDATIONS_PATH)]);
+        assert!(system_user.validate_participant_access().is_ok());
+        assert!(!system_user.can_apply_recommendations());
+
+        let administrator = api_index(&[
+            ("GET", PARTICIPANTS_PATH),
+            ("GET", RECOMMENDATIONS_PATH),
+            ("POST", APPLY_RECOMMENDATION_PATH),
+        ]);
+        assert!(administrator.can_apply_recommendations());
+    }
+
+    #[test]
+    fn participant_page_permission_is_required_for_subcard() {
+        let dashboard_only = api_index(&[("GET", RECOMMENDATIONS_PATH)]);
+        assert_eq!(
+            dashboard_only.validate_participant_access().unwrap_err(),
+            "当前 API Key 没有读取参与者的权限。请让管理员为该系统用户开放“参与者”页面，并配置至少一个可见参与者。"
+        );
     }
 }

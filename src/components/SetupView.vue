@@ -41,7 +41,8 @@ function submit() {
         </div>
 
         <p class="text-sm leading-6 opacity-70">
-          使用 Sub2Pool API Key 获取参与者权益、用量和待应用建议，并可直接应用建议。
+          管理员 API Key 可查看参与者并直接应用建议。系统用户 API Key
+          只显示管理员授权的参与者，且不提供“应用建议”；使用前需要开放“参与者”页面权限。
           Key 只保存在系统凭据库中。
         </p>
 

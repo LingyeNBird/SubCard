@@ -11,6 +11,20 @@ import type { AppSnapshot, DisplayMode, RefreshResult } from "../types";
 
 const previewMode = import.meta.env.DEV && !isTauri();
 
+function previewCardData(): RefreshResult {
+  const result = previewRefreshResult();
+  if (!new URLSearchParams(window.location.search).has("system-user")) {
+    return result;
+  }
+  const participants = result.participants.slice(0, 1);
+  return {
+    ...result,
+    participants,
+    actionable_participant_ids: [],
+    selected_participant_ids: participants.map((participant) => participant.id),
+  };
+}
+
 export async function getAppSnapshot(): Promise<AppSnapshot> {
   if (!previewMode) return invoke<AppSnapshot>("get_app_snapshot");
   const params = new URLSearchParams(window.location.search);
@@ -29,7 +43,7 @@ export async function getAppSnapshot(): Promise<AppSnapshot> {
 
 export async function refreshParticipants(): Promise<RefreshResult> {
   return previewMode
-    ? previewRefreshResult()
+    ? previewCardData()
     : invoke<RefreshResult>("refresh_participants");
 }
 
@@ -48,7 +62,7 @@ export async function saveConnection(
   token: string,
 ): Promise<RefreshResult> {
   return previewMode
-    ? previewRefreshResult()
+    ? previewCardData()
     : invoke<RefreshResult>("save_connection", { baseUrl, token });
 }
 

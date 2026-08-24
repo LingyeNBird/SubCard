@@ -6,8 +6,8 @@ Subcard 是 Sub2Pool 的系统托盘参与者卡片。左键单击托盘图标�
 
 ## 首版能力
 
-- 使用 Sub2Pool API Key 调用 `/api/v1/participants` 和 `/api/v1/recommendations`
-- 对首页待应用建议显示“应用建议”，并调用 `/api/v1/recommendations/{participant_id}/apply`
+- 支持管理员和系统用户 API Key；系统用户只显示管理员授权的参与者，并且不能应用建议
+- 管理员 Key 对首页待应用建议显示“应用建议”，并调用 `/api/v1/recommendations/{participant_id}/apply`
 - API Key 保存到 Windows Credential Manager、macOS Keychain 或 Linux Secret Service
 - 右键菜单直接列出全部参与者并支持多选
 - 左右按钮或方向键切换已选参与者
@@ -26,7 +26,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-`pnpm dev` 可在浏览器中使用开发数据预览卡片；访问 `http://localhost:1420/?settings=1` 可预览首次连接界面。
+`pnpm dev` 可在浏览器中使用开发数据预览卡片；访问 `http://localhost:1420/?settings=1` 可预览首次连接界面，访问 `http://localhost:1420/?system-user=1` 可预览仅显示一个授权参与者且不能应用建议的系统用户界面。
 
 ## 验证与构建
 
