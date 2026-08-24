@@ -25,6 +25,14 @@ fn config_snapshot(state: &AppState) -> Result<StoredConfig, String> {
         .map(|config| config.clone())
 }
 
+fn cached_refresh_snapshot(state: &AppState) -> Result<Option<RefreshResult>, String> {
+    state
+        .cached_refresh
+        .lock()
+        .map_err(|_| lock_error("卡片缓存"))
+        .map(|cached| cached.clone())
+}
+
 fn apply_participants(
     app: &AppHandle,
     state: &AppState,
@@ -58,21 +66,22 @@ fn apply_participants(
         storage::save_config(app, &config)?;
         config.selected_participant_ids.clone()
     };
-    *state
-        .participants
-        .lock()
-        .map_err(|_| lock_error("参与者"))? = participants.clone();
-    tray::rebuild_menu(app)?;
     let refreshed_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    Ok(RefreshResult {
+    let result = RefreshResult {
         participants,
         actionable_participant_ids,
         selected_participant_ids,
         refreshed_at_ms,
-    })
+    };
+    *state
+        .cached_refresh
+        .lock()
+        .map_err(|_| lock_error("卡片缓存"))? = Some(result.clone());
+    tray::rebuild_menu(app)?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -84,6 +93,7 @@ fn get_app_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<AppSna
         .lock()
         .map_err(|_| lock_error("窗口"))?
         .clone();
+    let cached_refresh = cached_refresh_snapshot(&state)?;
     Ok(AppSnapshot {
         configured,
         base_url: config.base_url,
@@ -96,6 +106,7 @@ fn get_app_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<AppSna
             .get_webview_window("main")
             .and_then(|window| window.is_visible().ok())
             .unwrap_or(false),
+        cached_refresh,
     })
 }
 
@@ -103,6 +114,16 @@ async fn refresh_participants_inner(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<RefreshResult, String> {
+    let observed_refresh_at = cached_refresh_snapshot(state)?
+        .as_ref()
+        .map(|cached| cached.refreshed_at_ms);
+    let _refresh = state.refresh_lifecycle.lock().await;
+    let current_cache = cached_refresh_snapshot(state)?;
+    if current_cache.as_ref().map(|cached| cached.refreshed_at_ms) != observed_refresh_at {
+        if let Some(cached) = current_cache {
+            return Ok(cached);
+        }
+    }
     let config = config_snapshot(state)?;
     if config.base_url.is_empty() {
         return Err("请先配置 Sub2Pool 服务地址".to_string());
@@ -139,6 +160,7 @@ async fn apply_participant_recommendation(
     state: State<'_, AppState>,
     participant_id: i64,
 ) -> Result<RefreshResult, String> {
+    let _refresh = state.refresh_lifecycle.lock().await;
     let config = config_snapshot(&state)?;
     if config.base_url.is_empty() {
         return Err("请先配置 Sub2Pool 服务地址".to_string());
@@ -158,6 +180,7 @@ async fn save_connection(
     token: String,
 ) -> Result<RefreshResult, String> {
     let normalized_url = remote::normalize_base_url(&base_url)?;
+    let _refresh = state.refresh_lifecycle.lock().await;
     let trimmed_token = token.trim();
     let effective_token = if trimmed_token.is_empty() {
         storage::read_token()?.ok_or_else(|| "请输入 Sub2Pool API Key".to_string())?

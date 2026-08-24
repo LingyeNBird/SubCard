@@ -227,6 +227,7 @@ export const previewSnapshot: AppSnapshot = {
   card_width: null,
   display_mode: "card",
   visible: true,
+  cached_refresh: null,
 };
 
 export function previewRefreshResult(): RefreshResult {

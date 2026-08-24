@@ -179,10 +179,12 @@ pub fn fit_window_to_content(app: &AppHandle, width: f64, height: f64) -> Result
 pub fn rebuild_menu(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let participants = state
-        .participants
+        .cached_refresh
         .lock()
-        .map_err(|_| lock_error("参与者"))?
-        .clone();
+        .map_err(|_| lock_error("卡片缓存"))?
+        .as_ref()
+        .map(|cached| cached.participants.clone())
+        .unwrap_or_default();
     let (selected, minimal_mode) = {
         let config = state.config.lock().map_err(|_| lock_error("配置"))?;
         (config.selected_participant_ids.clone(), config.minimal_mode)
@@ -377,6 +379,14 @@ fn toggle_participant(app: &AppHandle, participant_id: i64) -> Result<(), String
         storage::save_config(app, &config)?;
         config.selected_participant_ids.clone()
     };
+    if let Some(cached) = state
+        .cached_refresh
+        .lock()
+        .map_err(|_| lock_error("卡片缓存"))?
+        .as_mut()
+    {
+        cached.selected_participant_ids = selected.clone();
+    }
     rebuild_menu(app)?;
     app.emit("selection-changed", selected)
         .map_err(|error| format!("同步参与者选择失败：{error}"))

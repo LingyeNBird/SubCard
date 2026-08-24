@@ -47,6 +47,7 @@ let windowFitTimer: ReturnType<typeof setTimeout> | null = null;
 const contentRoot = ref<HTMLElement | null>(null);
 const minimalWindowWidth = 640;
 const fullWindowWidth = 752;
+const cacheMaxAgeMs = 60_000;
 let cardWindowWidth = minimalWindowWidth;
 let customCardWindowWidth: number | null = null;
 
@@ -258,7 +259,19 @@ onMounted(async () => {
     minimalMode.value = snapshot.minimal_mode;
     mode.value = snapshot.configured ? snapshot.display_mode : "settings";
     cardVisible.value = snapshot.visible;
-    if (snapshot.configured) await refresh();
+    if (snapshot.configured) {
+      if (snapshot.cached_refresh) {
+        applyResult(snapshot.cached_refresh);
+        if (
+          Date.now() - snapshot.cached_refresh.refreshed_at_ms >=
+          cacheMaxAgeMs
+        ) {
+          void refresh();
+        }
+      } else {
+        await refresh();
+      }
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
     mode.value = "settings";
@@ -270,7 +283,7 @@ onMounted(async () => {
 
   refreshTimer = setInterval(() => {
     if (cardVisible.value && mode.value === "card") void refresh();
-  }, 60_000);
+  }, cacheMaxAgeMs);
 });
 
 onUnmounted(() => {

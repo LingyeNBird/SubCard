@@ -130,6 +130,7 @@ export interface AppSnapshot {
   card_width: number | null;
   display_mode: DisplayMode;
   visible: boolean;
+  cached_refresh: RefreshResult | null;
 }
 
 export interface RefreshResult {
