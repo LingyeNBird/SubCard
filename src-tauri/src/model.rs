@@ -193,6 +193,7 @@ pub struct AppState {
     pub config: Mutex<StoredConfig>,
     pub participants: Mutex<Vec<ParticipantCardData>>,
     pub display_mode: Mutex<DisplayMode>,
+    pub window_lifecycle: tauri::async_runtime::Mutex<()>,
 }
 
 impl AppState {
@@ -201,6 +202,7 @@ impl AppState {
             config: Mutex::new(config),
             participants: Mutex::new(Vec::new()),
             display_mode: Mutex::new(DisplayMode::Card),
+            window_lifecycle: tauri::async_runtime::Mutex::new(()),
         }
     }
 }

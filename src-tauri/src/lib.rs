@@ -8,7 +8,7 @@ use std::{
     collections::HashSet,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 const MIN_CARD_WIDTH: f64 = 480.0;
@@ -99,19 +99,38 @@ fn get_app_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<AppSna
     })
 }
 
-#[tauri::command]
-async fn refresh_participants(
-    app: AppHandle,
-    state: State<'_, AppState>,
+async fn refresh_participants_inner(
+    app: &AppHandle,
+    state: &AppState,
 ) -> Result<RefreshResult, String> {
-    let config = config_snapshot(&state)?;
+    let config = config_snapshot(state)?;
     if config.base_url.is_empty() {
         return Err("请先配置 Sub2Pool 服务地址".to_string());
     }
     let token = storage::read_token()?.ok_or_else(|| "请先配置 Sub2Pool API Key".to_string())?;
     let (participants, actionable_participant_ids) =
         remote::fetch_card_data(&config.base_url, &token).await?;
-    apply_participants(&app, &state, participants, actionable_participant_ids)
+    apply_participants(app, state, participants, actionable_participant_ids)
+}
+
+pub(crate) fn refresh_participants_in_background(app: &AppHandle) {
+    let app = app.clone();
+    drop(tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        if let Err(error) = refresh_participants_inner(&app, &state).await {
+            if app.get_webview_window("main").is_some() {
+                let _ = app.emit("desktop-error", error);
+            }
+        }
+    }));
+}
+
+#[tauri::command]
+async fn refresh_participants(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RefreshResult, String> {
+    refresh_participants_inner(&app, &state).await
 }
 
 #[tauri::command]
@@ -162,8 +181,8 @@ async fn save_connection(
 }
 
 #[tauri::command]
-fn hide_card(app: AppHandle) -> Result<(), String> {
-    tray::hide_window(&app)
+fn close_card(app: AppHandle) {
+    tray::close_window(&app);
 }
 
 #[tauri::command]
@@ -191,14 +210,18 @@ pub fn run() {
         ))
         .setup(|app| {
             let config = storage::load_config(app.handle()).map_err(std::io::Error::other)?;
+            let refresh_on_start = !config.base_url.is_empty();
             app.manage(AppState::new(config));
             tray::setup(app).map_err(std::io::Error::other)?;
+            if refresh_on_start {
+                refresh_participants_in_background(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                tray::close_window(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -206,10 +229,17 @@ pub fn run() {
             refresh_participants,
             apply_participant_recommendation,
             save_connection,
-            hide_card,
+            close_card,
             fit_window_to_content,
             save_card_width,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Subcard");
+        .build(tauri::generate_context!())
+        .expect("error while building Subcard")
+        .run(|_app, event| {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

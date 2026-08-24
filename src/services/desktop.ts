@@ -88,8 +88,8 @@ export async function startLeftResize(): Promise<void> {
 }
 
 
-export async function hideCard(): Promise<void> {
-  if (!previewMode) await invoke("hide_card");
+export async function closeCard(): Promise<void> {
+  if (!previewMode) await invoke("close_card");
 }
 
 async function listenOrNoop<T>(

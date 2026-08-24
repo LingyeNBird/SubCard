@@ -8,7 +8,7 @@ import {
   applyParticipantRecommendation,
   fitWindowToContent,
   getAppSnapshot,
-  hideCard,
+  closeCard as closeCardWindow,
   onCardVisibilityChanged,
   onDesktopError,
   onDisplayModeChanged,
@@ -200,7 +200,7 @@ async function beginLeftResize(event: PointerEvent) {
 }
 
 async function closeCard() {
-  await hideCard();
+  await closeCardWindow();
 }
 
 function handleKeydown(event: KeyboardEvent) {

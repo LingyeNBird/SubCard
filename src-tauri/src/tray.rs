@@ -5,7 +5,7 @@ use crate::{
 use tauri::{
     menu::{CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_positioner::{Position, WindowExt};
@@ -16,9 +16,15 @@ const REFRESH_ID: &str = "refresh";
 const SETTINGS_ID: &str = "settings";
 const AUTOSTART_ID: &str = "autostart";
 const MINIMAL_MODE_ID: &str = "minimal-mode";
-const HIDE_ID: &str = "hide-card";
+const CLOSE_ID: &str = "close-card";
 const QUIT_ID: &str = "quit";
 const PARTICIPANT_PREFIX: &str = "participant:";
+
+enum WindowAction {
+    Show(DisplayMode),
+    Close,
+    Toggle,
+}
 
 fn lock_error(name: &str) -> String {
     format!("{name}状态暂时不可用")
@@ -219,7 +225,7 @@ fn build_menu(
     let autostart = CheckMenuItemBuilder::with_id(AUTOSTART_ID, "开机启动")
         .checked(autostart_enabled)
         .build(app)?;
-    let hide = MenuItemBuilder::with_id(HIDE_ID, "关闭卡片").build(app)?;
+    let close = MenuItemBuilder::with_id(CLOSE_ID, "关闭卡片").build(app)?;
     let quit = MenuItemBuilder::with_id(QUIT_ID, "退出 Subcard").build(app)?;
     let separator = || PredefinedMenuItem::separator(app);
 
@@ -255,7 +261,7 @@ fn build_menu(
     menu.append(&minimal_mode_item)?;
     menu.append(&autostart)?;
     menu.append(&separator()?)?;
-    menu.append(&hide)?;
+    menu.append(&close)?;
     menu.append(&quit)?;
     Ok(menu)
 }
@@ -267,11 +273,26 @@ fn set_display_mode(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
         .map_err(|error| format!("更新窗口模式失败：{error}"))
 }
 
-pub fn show_window(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
+fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "main")
+        .ok_or_else(|| "缺少卡片窗口配置".to_string())?;
+    WebviewWindowBuilder::from_config(app, config)
+        .map_err(|error| format!("读取卡片窗口配置失败：{error}"))?
+        .build()
+        .map_err(|error| format!("创建卡片窗口失败：{error}"))
+}
+
+fn show_window_now(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
     set_display_mode(app, mode)?;
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "卡片窗口尚未就绪".to_string())?;
+    let window = match app.get_webview_window("main") {
+        Some(window) => window,
+        None => create_main_window(app)?,
+    };
     window
         .move_window(Position::TrayCenter)
         .map_err(|error| format!("定位卡片窗口失败：{error}"))?;
@@ -286,27 +307,57 @@ pub fn show_window(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
         .map_err(|error| format!("同步卡片状态失败：{error}"))
 }
 
-pub fn hide_window(app: &AppHandle) -> Result<(), String> {
-    app.get_webview_window("main")
-        .ok_or_else(|| "卡片窗口尚未就绪".to_string())?
-        .hide()
-        .map_err(|error| format!("关闭卡片失败：{error}"))?;
-    app.emit("card-visibility", false)
-        .map_err(|error| format!("同步卡片状态失败：{error}"))
+fn close_window_now(app: &AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let _ = app.emit("card-visibility", false);
+    window
+        .destroy()
+        .map_err(|error| format!("关闭卡片失败：{error}"))
 }
 
-fn toggle_window(app: &AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "卡片窗口尚未就绪".to_string())?;
-    if window
-        .is_visible()
-        .map_err(|error| format!("读取卡片窗口状态失败：{error}"))?
-    {
-        hide_window(app)
-    } else {
-        show_window(app, DisplayMode::Card)
+fn toggle_window_now(app: &AppHandle) -> Result<(), String> {
+    match app.get_webview_window("main") {
+        Some(window)
+            if window
+                .is_visible()
+                .map_err(|error| format!("读取卡片窗口状态失败：{error}"))? =>
+        {
+            close_window_now(app)
+        }
+        _ => show_window_now(app, DisplayMode::Card),
     }
+}
+
+fn queue_window_action(app: &AppHandle, action: WindowAction) {
+    let app = app.clone();
+    drop(tauri::async_runtime::spawn(async move {
+        let result = {
+            let state = app.state::<AppState>();
+            let _lifecycle = state.window_lifecycle.lock().await;
+            match action {
+                WindowAction::Show(mode) => show_window_now(&app, mode),
+                WindowAction::Close => close_window_now(&app),
+                WindowAction::Toggle => toggle_window_now(&app),
+            }
+        };
+        if let Err(error) = result {
+            let _ = app.emit("desktop-error", error);
+        }
+    }));
+}
+
+pub fn show_window(app: &AppHandle, mode: DisplayMode) {
+    queue_window_action(app, WindowAction::Show(mode));
+}
+
+pub fn close_window(app: &AppHandle) {
+    queue_window_action(app, WindowAction::Close);
+}
+
+fn toggle_window(app: &AppHandle) {
+    queue_window_action(app, WindowAction::Toggle);
 }
 
 fn toggle_participant(app: &AppHandle, participant_id: i64) -> Result<(), String> {
@@ -369,14 +420,29 @@ fn handle_menu_event(app: &AppHandle, id: &str) -> Result<(), String> {
         return toggle_participant(app, participant_id);
     }
     match id {
-        SHOW_ID => show_window(app, DisplayMode::Card),
-        REFRESH_ID => app
-            .emit("refresh-requested", ())
-            .map_err(|error| format!("请求刷新失败：{error}")),
-        SETTINGS_ID => show_window(app, DisplayMode::Settings),
+        SHOW_ID => {
+            show_window(app, DisplayMode::Card);
+            Ok(())
+        }
+        REFRESH_ID => {
+            if app.get_webview_window("main").is_some() {
+                app.emit("refresh-requested", ())
+                    .map_err(|error| format!("请求刷新失败：{error}"))
+            } else {
+                crate::refresh_participants_in_background(app);
+                Ok(())
+            }
+        }
+        SETTINGS_ID => {
+            show_window(app, DisplayMode::Settings);
+            Ok(())
+        }
         MINIMAL_MODE_ID => toggle_minimal_mode(app),
         AUTOSTART_ID => toggle_autostart(app),
-        HIDE_ID => hide_window(app),
+        CLOSE_ID => {
+            close_window(app);
+            Ok(())
+        }
         QUIT_ID => {
             app.exit(0);
             Ok(())
@@ -421,9 +487,7 @@ pub fn setup(app: &tauri::App) -> Result<(), String> {
                 ..
             } = event
             {
-                if let Err(error) = toggle_window(tray.app_handle()) {
-                    let _ = tray.app_handle().emit("desktop-error", error);
-                }
+                toggle_window(tray.app_handle());
             }
         })
         .build(app)
