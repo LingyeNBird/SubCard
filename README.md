@@ -36,6 +36,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build
 ```
 
+## 发布 Release
+
+Release 只能通过 GitHub Actions 中的“手动发布 Release”工作流手动触发。触发时填写不带 `v` 前缀的三段式版本标签，例如 `0.1.0`。工作流会校验项目版本、构建全部桌面平台、汇总上一个正式 Release 之后的所有提交，并在全部构建成功后发布 Release。
+
 ## 开源协议
 
 Subcard 采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）发布。

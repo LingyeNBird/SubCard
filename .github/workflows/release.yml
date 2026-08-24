@@ -1,0 +1,202 @@
+name: 手动发布 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "版本标签（格式：0.1.0，不带 v）"
+        required: true
+        default: "0.1.0"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: 校验版本并生成更新日志
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      release_body: ${{ steps.notes.outputs.release_body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验版本标签
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "标签必须是 0.1.0 形式的三个数字，且不能带 v 前缀。" >&2
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["TAG"]
+          package_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+          tauri_version = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["version"]
+          cargo_text = Path("src-tauri/Cargo.toml").read_text(encoding="utf-8")
+          cargo_match = re.search(r'^version = "([^"]+)"$', cargo_text, re.MULTILINE)
+          cargo_version = cargo_match.group(1) if cargo_match else ""
+          versions = {
+              "package.json": package_version,
+              "src-tauri/tauri.conf.json": tauri_version,
+              "src-tauri/Cargo.toml": cargo_version,
+          }
+          mismatched = {path: version for path, version in versions.items() if version != tag}
+          if mismatched:
+              details = ", ".join(f"{path}={version}" for path, version in mismatched.items())
+              raise SystemExit(f"标签 {tag} 与项目版本不一致：{details}")
+          PY
+
+          release_is_draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "$release_is_draft" == "false" ]]; then
+            echo "Release $TAG 已经发布，不能重复发布。" >&2
+            exit 1
+          fi
+
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            tag_commit="$(git rev-list -n 1 "$TAG")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "标签 $TAG 已指向其他提交：$tag_commit" >&2
+              exit 1
+            fi
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: 生成完整更新日志
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.validate.outputs.tag }}
+        shell: bash
+        run: |
+          previous_tag="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          if [[ -n "$previous_tag" ]]; then
+            range="${previous_tag}..${GITHUB_SHA}"
+          else
+            range="${GITHUB_SHA}"
+          fi
+
+          {
+            echo "## 更新内容"
+            echo
+            if [[ -n "$(git rev-list --max-count=1 "$range")" ]]; then
+              while IFS=$'\t' read -r full_hash short_hash subject; do
+                printf -- '- %s ([`%s`](https://github.com/%s/commit/%s))\n' \
+                  "$subject" "$short_hash" "$GITHUB_REPOSITORY" "$full_hash"
+              done < <(git log --reverse --format='%H%x09%h%x09%s' "$range")
+            else
+              echo "- 本版本未包含新的提交。"
+            fi
+            echo
+            if [[ -n "$previous_tag" ]]; then
+              echo "**完整比较：** [${previous_tag}...${TAG}](https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG})"
+            else
+              echo "这是 Subcard 的首个公开版本。"
+            fi
+            echo
+            echo "## 下载说明"
+            echo
+            echo "- Windows：下载 \`.msi\` 或 \`-setup.exe\` 安装包。"
+            echo "- macOS：根据处理器架构下载对应的 \`.dmg\` 文件。"
+            echo "- Linux：下载适合当前发行版的 \`.AppImage\`、\`.deb\` 或 \`.rpm\` 文件。"
+          } > release-notes.md
+
+          {
+            echo "release_body<<RELEASE_BODY"
+            cat release-notes.md
+            echo "RELEASE_BODY"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: 构建 ${{ matrix.platform }} ${{ matrix.target }}
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ""
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 安装 Linux 桌面依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建并上传 Release 产物
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: Subcard ${{ needs.prepare.outputs.tag }}
+          releaseBody: ${{ needs.prepare.outputs.release_body }}
+          releaseCommitish: ${{ github.sha }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+          retryAttempts: 2
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: subcard-[platform]-[arch]-[bundle]
+
+  publish:
+    name: 发布 Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 发布已完成构建的 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false --title "Subcard $TAG" --repo "$GITHUB_REPOSITORY"
