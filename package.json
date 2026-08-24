@@ -1,7 +1,7 @@
 {
   "name": "subcard",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "description": "Subcard, a native system tray client for Sub2Pool participant cards",
   "type": "module",
