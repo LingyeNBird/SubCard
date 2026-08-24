@@ -172,6 +172,8 @@ pub fn fit_window_to_content(app: &AppHandle, width: f64, height: f64) -> Result
                 .map_err(|error| format!("保持卡片边缘位置失败：{error}"))?;
         }
         clamp_window_to_work_area(&window)?;
+    } else {
+        position_and_show_window(app, &window)?;
     }
     Ok(())
 }
@@ -275,6 +277,21 @@ fn set_display_mode(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
         .map_err(|error| format!("更新窗口模式失败：{error}"))
 }
 
+fn position_and_show_window(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    window
+        .move_window(Position::TrayCenter)
+        .map_err(|error| format!("定位卡片窗口失败：{error}"))?;
+    align_window_to_work_area_right_edge(window)?;
+    window
+        .show()
+        .map_err(|error| format!("显示卡片窗口失败：{error}"))?;
+    window
+        .set_focus()
+        .map_err(|error| format!("聚焦卡片窗口失败：{error}"))?;
+    app.emit("card-visibility", true)
+        .map_err(|error| format!("同步卡片状态失败：{error}"))
+}
+
 fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     let config = app
         .config()
@@ -291,22 +308,17 @@ fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
 fn show_window_now(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
     set_display_mode(app, mode)?;
-    let window = match app.get_webview_window("main") {
-        Some(window) => window,
-        None => create_main_window(app)?,
+    let Some(window) = app.get_webview_window("main") else {
+        create_main_window(app)?;
+        return Ok(());
     };
-    window
-        .move_window(Position::TrayCenter)
-        .map_err(|error| format!("定位卡片窗口失败：{error}"))?;
-    align_window_to_work_area_right_edge(&window)?;
-    window
-        .show()
-        .map_err(|error| format!("显示卡片窗口失败：{error}"))?;
-    window
-        .set_focus()
-        .map_err(|error| format!("聚焦卡片窗口失败：{error}"))?;
-    app.emit("card-visibility", true)
-        .map_err(|error| format!("同步卡片状态失败：{error}"))
+    if !window
+        .is_visible()
+        .map_err(|error| format!("读取卡片窗口状态失败：{error}"))?
+    {
+        return Ok(());
+    }
+    position_and_show_window(app, &window)
 }
 
 fn close_window_now(app: &AppHandle) -> Result<(), String> {

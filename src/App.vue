@@ -145,6 +145,7 @@ function move(delta: -1 | 1) {
 }
 
 function scheduleWindowFit() {
+  if (initializing.value) return;
   if (leftResizeActive) return;
   if (windowFitTimer) clearTimeout(windowFitTimer);
   windowFitTimer = setTimeout(() => {
