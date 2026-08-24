@@ -14,6 +14,7 @@ pub struct StoredConfig {
     #[serde(default = "default_minimal_mode")]
     pub minimal_mode: bool,
     pub card_width: Option<f64>,
+    pub quick_response_mode: bool,
 }
 
 impl Default for StoredConfig {
@@ -24,11 +25,12 @@ impl Default for StoredConfig {
             selection_initialized: false,
             minimal_mode: true,
             card_width: None,
+            quick_response_mode: false,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayMode {
     #[default]
@@ -190,10 +192,17 @@ pub struct RefreshResult {
     pub refreshed_at_ms: u64,
 }
 
+#[derive(Debug, Default)]
+pub struct WindowRuntimeState {
+    pub ready: bool,
+    pub show_pending: bool,
+}
+
 pub struct AppState {
     pub config: Mutex<StoredConfig>,
     pub cached_refresh: Mutex<Option<RefreshResult>>,
     pub display_mode: Mutex<DisplayMode>,
+    pub window_runtime: Mutex<WindowRuntimeState>,
     pub window_lifecycle: tauri::async_runtime::Mutex<()>,
     pub refresh_lifecycle: tauri::async_runtime::Mutex<()>,
 }
@@ -204,6 +213,7 @@ impl AppState {
             config: Mutex::new(config),
             cached_refresh: Mutex::new(None),
             display_mode: Mutex::new(DisplayMode::Card),
+            window_runtime: Mutex::new(WindowRuntimeState::default()),
             window_lifecycle: tauri::async_runtime::Mutex::new(()),
             refresh_lifecycle: tauri::async_runtime::Mutex::new(()),
         }
@@ -215,15 +225,18 @@ mod tests {
     use super::StoredConfig;
 
     #[test]
-    fn minimal_mode_defaults_to_enabled() {
+    fn display_preferences_have_safe_defaults() {
         let default = StoredConfig::default();
         assert!(default.minimal_mode);
         assert_eq!(default.card_width, None);
+        assert!(!default.quick_response_mode);
         let config: StoredConfig = serde_json::from_str("{}").expect("config should deserialize");
         assert!(config.minimal_mode);
         assert_eq!(config.card_width, None);
+        assert!(!config.quick_response_mode);
         let saved: StoredConfig =
             serde_json::from_str(r#"{"card_width":812}"#).expect("width should deserialize");
         assert_eq!(saved.card_width, Some(812.0));
+        assert!(!saved.quick_response_mode);
     }
 }

@@ -50,6 +50,7 @@ const fullWindowWidth = 752;
 const cacheMaxAgeMs = 60_000;
 let cardWindowWidth = minimalWindowWidth;
 let customCardWindowWidth: number | null = null;
+let lastRefreshedAtMs = 0;
 
 const selectedParticipants = computed(() =>
   participants.value.filter((participant) =>
@@ -73,6 +74,7 @@ function applyResult(result: RefreshResult) {
   participants.value = result.participants;
   actionableParticipantIds.value = result.actionable_participant_ids;
   selectedIds.value = result.selected_participant_ids;
+  lastRefreshedAtMs = result.refreshed_at_ms;
   if (currentId != null) {
     const nextIndex = selectedParticipants.value.findIndex(
       (participant) => participant.id === currentId,
@@ -80,6 +82,13 @@ function applyResult(result: RefreshResult) {
     currentIndex.value = nextIndex >= 0 ? nextIndex : 0;
   }
 }
+function cacheIsStale() {
+  return (
+    lastRefreshedAtMs === 0 ||
+    Date.now() - lastRefreshedAtMs >= cacheMaxAgeMs
+  );
+}
+
 
 async function refresh() {
   if (!configured.value || loading.value) return;
@@ -241,7 +250,10 @@ onMounted(async () => {
     }),
     await onCardVisibilityChanged((value) => {
       cardVisible.value = value;
-      if (value) void nextTick(scheduleWindowFit);
+      if (value) {
+        void nextTick(scheduleWindowFit);
+        if (mode.value === "card" && cacheIsStale()) void refresh();
+      }
     }),
     await onDesktopError((message) => {
       error.value = message;
@@ -263,10 +275,7 @@ onMounted(async () => {
     if (snapshot.configured) {
       if (snapshot.cached_refresh) {
         applyResult(snapshot.cached_refresh);
-        if (
-          Date.now() - snapshot.cached_refresh.refreshed_at_ms >=
-          cacheMaxAgeMs
-        ) {
+        if (cacheIsStale()) {
           void refresh();
         }
       } else {

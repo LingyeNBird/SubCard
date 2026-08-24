@@ -209,8 +209,8 @@ fn close_card(app: AppHandle) {
 }
 
 #[tauri::command]
-fn fit_window_to_content(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
-    tray::fit_window_to_content(&app, width, height)
+async fn fit_window_to_content(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    tray::fit_window_to_content(&app, width, height).await
 }
 
 #[tauri::command]

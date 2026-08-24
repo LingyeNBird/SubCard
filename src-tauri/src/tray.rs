@@ -16,6 +16,7 @@ const REFRESH_ID: &str = "refresh";
 const SETTINGS_ID: &str = "settings";
 const AUTOSTART_ID: &str = "autostart";
 const MINIMAL_MODE_ID: &str = "minimal-mode";
+const QUICK_RESPONSE_MODE_ID: &str = "quick-response-mode";
 const CLOSE_ID: &str = "close-card";
 const QUIT_ID: &str = "quit";
 const PARTICIPANT_PREFIX: &str = "participant:";
@@ -24,6 +25,7 @@ enum WindowAction {
     Show(DisplayMode),
     Close,
     Toggle,
+    ReleaseHidden,
 }
 
 fn lock_error(name: &str) -> String {
@@ -118,10 +120,12 @@ fn align_window_to_work_area_right_edge(window: &tauri::WebviewWindow) -> Result
     Ok(())
 }
 
-pub fn fit_window_to_content(app: &AppHandle, width: f64, height: f64) -> Result<(), String> {
+pub async fn fit_window_to_content(app: &AppHandle, width: f64, height: f64) -> Result<(), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return Err("卡片内容尺寸无效".to_string());
     }
+    let state = app.state::<AppState>();
+    let _lifecycle = state.window_lifecycle.lock().await;
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "卡片窗口尚未就绪".to_string())?;
@@ -140,6 +144,12 @@ pub fn fit_window_to_content(app: &AppHandle, width: f64, height: f64) -> Result
     let visible = window
         .is_visible()
         .map_err(|error| format!("读取卡片窗口状态失败：{error}"))?;
+    let show_pending = !visible
+        && state
+            .window_runtime
+            .lock()
+            .map_err(|_| lock_error("窗口"))?
+            .show_pending;
     let anchor = if visible {
         Some((
             window
@@ -172,8 +182,18 @@ pub fn fit_window_to_content(app: &AppHandle, width: f64, height: f64) -> Result
                 .map_err(|error| format!("保持卡片边缘位置失败：{error}"))?;
         }
         clamp_window_to_work_area(&window)?;
-    } else {
+    } else if show_pending {
         position_and_show_window(app, &window)?;
+    }
+    {
+        let mut runtime = state
+            .window_runtime
+            .lock()
+            .map_err(|_| lock_error("窗口"))?;
+        runtime.ready = true;
+        if show_pending {
+            runtime.show_pending = false;
+        }
     }
     Ok(())
 }
@@ -187,9 +207,13 @@ pub fn rebuild_menu(app: &AppHandle) -> Result<(), String> {
         .as_ref()
         .map(|cached| cached.participants.clone())
         .unwrap_or_default();
-    let (selected, minimal_mode) = {
+    let (selected, minimal_mode, quick_response_mode) = {
         let config = state.config.lock().map_err(|_| lock_error("配置"))?;
-        (config.selected_participant_ids.clone(), config.minimal_mode)
+        (
+            config.selected_participant_ids.clone(),
+            config.minimal_mode,
+            config.quick_response_mode,
+        )
     };
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let menu = build_menu(
@@ -197,6 +221,7 @@ pub fn rebuild_menu(app: &AppHandle) -> Result<(), String> {
         &participants,
         &selected,
         minimal_mode,
+        quick_response_mode,
         autostart_enabled,
     )
     .map_err(|error| format!("创建托盘菜单失败：{error}"))?;
@@ -212,6 +237,7 @@ fn build_menu(
     participants: &[ParticipantCardData],
     selected: &[i64],
     minimal_mode: bool,
+    quick_response_mode: bool,
     autostart_enabled: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let title = MenuItemBuilder::with_id("title", "Subcard")
@@ -226,6 +252,10 @@ fn build_menu(
     let minimal_mode_item = CheckMenuItemBuilder::with_id(MINIMAL_MODE_ID, "极简模式")
         .checked(minimal_mode)
         .build(app)?;
+    let quick_response_mode_item =
+        CheckMenuItemBuilder::with_id(QUICK_RESPONSE_MODE_ID, "快速响应模式")
+            .checked(quick_response_mode)
+            .build(app)?;
     let autostart = CheckMenuItemBuilder::with_id(AUTOSTART_ID, "开机启动")
         .checked(autostart_enabled)
         .build(app)?;
@@ -263,6 +293,7 @@ fn build_menu(
     menu.append(&refresh)?;
     menu.append(&settings)?;
     menu.append(&minimal_mode_item)?;
+    menu.append(&quick_response_mode_item)?;
     menu.append(&autostart)?;
     menu.append(&separator()?)?;
     menu.append(&close)?;
@@ -270,11 +301,17 @@ fn build_menu(
     Ok(menu)
 }
 
-fn set_display_mode(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
+fn set_display_mode(app: &AppHandle, mode: DisplayMode) -> Result<bool, String> {
     let state = app.state::<AppState>();
-    *state.display_mode.lock().map_err(|_| lock_error("窗口"))? = mode.clone();
+    let changed = {
+        let mut current = state.display_mode.lock().map_err(|_| lock_error("窗口"))?;
+        let changed = *current != mode;
+        *current = mode.clone();
+        changed
+    };
     app.emit("display-mode", mode)
-        .map_err(|error| format!("更新窗口模式失败：{error}"))
+        .map_err(|error| format!("更新窗口模式失败：{error}"))?;
+    Ok(changed)
 }
 
 fn position_and_show_window(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
@@ -300,23 +337,40 @@ fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .iter()
         .find(|config| config.label == "main")
         .ok_or_else(|| "缺少卡片窗口配置".to_string())?;
-    WebviewWindowBuilder::from_config(app, config)
+    let window = WebviewWindowBuilder::from_config(app, config)
         .map_err(|error| format!("读取卡片窗口配置失败：{error}"))?
         .build()
-        .map_err(|error| format!("创建卡片窗口失败：{error}"))
+        .map_err(|error| format!("创建卡片窗口失败：{error}"))?;
+    let state = app.state::<AppState>();
+    let mut runtime = state
+        .window_runtime
+        .lock()
+        .map_err(|_| lock_error("窗口"))?;
+    runtime.ready = false;
+    runtime.show_pending = true;
+    Ok(window)
 }
 
 fn show_window_now(app: &AppHandle, mode: DisplayMode) -> Result<(), String> {
-    set_display_mode(app, mode)?;
+    let mode_changed = set_display_mode(app, mode)?;
     let Some(window) = app.get_webview_window("main") else {
         create_main_window(app)?;
         return Ok(());
     };
-    if !window
+    let visible = window
         .is_visible()
-        .map_err(|error| format!("读取卡片窗口状态失败：{error}"))?
-    {
-        return Ok(());
+        .map_err(|error| format!("读取卡片窗口状态失败：{error}"))?;
+    if !visible {
+        let state = app.state::<AppState>();
+        let mut runtime = state
+            .window_runtime
+            .lock()
+            .map_err(|_| lock_error("窗口"))?;
+        if mode_changed || !runtime.ready {
+            runtime.ready = false;
+            runtime.show_pending = true;
+            return Ok(());
+        }
     }
     position_and_show_window(app, &window)
 }
@@ -325,10 +379,57 @@ fn close_window_now(app: &AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
-    let _ = app.emit("card-visibility", false);
+    let state = app.state::<AppState>();
+    let quick_response_mode = state
+        .config
+        .lock()
+        .map_err(|_| lock_error("配置"))?
+        .quick_response_mode;
+    if quick_response_mode {
+        window
+            .hide()
+            .map_err(|error| format!("隐藏卡片失败：{error}"))?;
+        state
+            .window_runtime
+            .lock()
+            .map_err(|_| lock_error("窗口"))?
+            .show_pending = false;
+    } else {
+        window
+            .destroy()
+            .map_err(|error| format!("关闭卡片失败：{error}"))?;
+        *state
+            .window_runtime
+            .lock()
+            .map_err(|_| lock_error("窗口"))? = Default::default();
+    }
+    app.emit("card-visibility", false)
+        .map_err(|error| format!("同步卡片状态失败：{error}"))
+}
+
+fn release_hidden_window_now(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let Some(window) = app.get_webview_window("main") else {
+        *state
+            .window_runtime
+            .lock()
+            .map_err(|_| lock_error("窗口"))? = Default::default();
+        return Ok(());
+    };
+    if window
+        .is_visible()
+        .map_err(|error| format!("读取卡片窗口状态失败：{error}"))?
+    {
+        return Ok(());
+    }
     window
         .destroy()
-        .map_err(|error| format!("关闭卡片失败：{error}"))
+        .map_err(|error| format!("释放卡片窗口失败：{error}"))?;
+    *state
+        .window_runtime
+        .lock()
+        .map_err(|_| lock_error("窗口"))? = Default::default();
+    Ok(())
 }
 
 fn toggle_window_now(app: &AppHandle) -> Result<(), String> {
@@ -354,6 +455,7 @@ fn queue_window_action(app: &AppHandle, action: WindowAction) {
                 WindowAction::Show(mode) => show_window_now(&app, mode),
                 WindowAction::Close => close_window_now(&app),
                 WindowAction::Toggle => toggle_window_now(&app),
+                WindowAction::ReleaseHidden => release_hidden_window_now(&app),
             }
         };
         if let Err(error) = result {
@@ -416,6 +518,20 @@ fn toggle_minimal_mode(app: &AppHandle) -> Result<(), String> {
     app.emit("minimal-mode-changed", minimal_mode)
         .map_err(|error| format!("同步极简模式失败：{error}"))
 }
+fn toggle_quick_response_mode(app: &AppHandle) -> Result<(), String> {
+    let enabled = {
+        let state = app.state::<AppState>();
+        let mut config = state.config.lock().map_err(|_| lock_error("配置"))?;
+        config.quick_response_mode = !config.quick_response_mode;
+        storage::save_config(app, &config)?;
+        config.quick_response_mode
+    };
+    rebuild_menu(app)?;
+    if !enabled {
+        queue_window_action(app, WindowAction::ReleaseHidden);
+    }
+    Ok(())
+}
 
 fn toggle_autostart(app: &AppHandle) -> Result<(), String> {
     let manager = app.autolaunch();
@@ -460,6 +576,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) -> Result<(), String> {
             Ok(())
         }
         MINIMAL_MODE_ID => toggle_minimal_mode(app),
+        QUICK_RESPONSE_MODE_ID => toggle_quick_response_mode(app),
         AUTOSTART_ID => toggle_autostart(app),
         CLOSE_ID => {
             close_window(app);
@@ -475,9 +592,13 @@ fn handle_menu_event(app: &AppHandle, id: &str) -> Result<(), String> {
 
 pub fn setup(app: &tauri::App) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let (selected, minimal_mode) = {
+    let (selected, minimal_mode, quick_response_mode) = {
         let config = state.config.lock().map_err(|_| lock_error("配置"))?;
-        (config.selected_participant_ids.clone(), config.minimal_mode)
+        (
+            config.selected_participant_ids.clone(),
+            config.minimal_mode,
+            config.quick_response_mode,
+        )
     };
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let menu = build_menu(
@@ -485,6 +606,7 @@ pub fn setup(app: &tauri::App) -> Result<(), String> {
         &[],
         &selected,
         minimal_mode,
+        quick_response_mode,
         autostart_enabled,
     )
     .map_err(|error| format!("创建托盘菜单失败：{error}"))?;
