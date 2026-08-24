@@ -2,16 +2,27 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import {
-  previewApplyRecommendation,
-  previewRefreshResult,
-  previewSnapshot,
-} from "../preview";
 import type { AppSnapshot, DisplayMode, RefreshResult } from "../types";
 
-const previewMode = import.meta.env.DEV && !isTauri();
+type PreviewModule = typeof import("../preview");
 
-function previewCardData(): RefreshResult {
+const previewMode = import.meta.env.DEV && !isTauri();
+const previewModuleUrl = "/src/preview.ts";
+let previewModulePromise: Promise<PreviewModule> | null = null;
+
+function loadPreviewModule(): Promise<PreviewModule> {
+  if (!previewMode) {
+    throw new Error("浏览器预览仅在开发环境可用");
+  }
+  previewModulePromise ??= import(
+    /* @vite-ignore */ previewModuleUrl
+  ) as Promise<PreviewModule>;
+  return previewModulePromise;
+}
+
+
+async function previewCardData(): Promise<RefreshResult> {
+  const { previewRefreshResult } = await loadPreviewModule();
   const result = previewRefreshResult();
   if (!new URLSearchParams(window.location.search).has("system-user")) {
     return result;
@@ -27,6 +38,7 @@ function previewCardData(): RefreshResult {
 
 export async function getAppSnapshot(): Promise<AppSnapshot> {
   if (!previewMode) return invoke<AppSnapshot>("get_app_snapshot");
+  const { previewSnapshot } = await loadPreviewModule();
   const params = new URLSearchParams(window.location.search);
   if (params.has("settings")) {
     return {
@@ -42,28 +54,28 @@ export async function getAppSnapshot(): Promise<AppSnapshot> {
 }
 
 export async function refreshParticipants(): Promise<RefreshResult> {
-  return previewMode
-    ? previewCardData()
-    : invoke<RefreshResult>("refresh_participants");
+  if (previewMode) return previewCardData();
+  return invoke<RefreshResult>("refresh_participants");
 }
 
 export async function applyParticipantRecommendation(
   participantId: number,
 ): Promise<RefreshResult> {
-  return previewMode
-    ? previewApplyRecommendation(participantId)
-    : invoke<RefreshResult>("apply_participant_recommendation", {
-        participantId,
-      });
+  if (previewMode) {
+    const { previewApplyRecommendation } = await loadPreviewModule();
+    return previewApplyRecommendation(participantId);
+  }
+  return invoke<RefreshResult>("apply_participant_recommendation", {
+    participantId,
+  });
 }
 
 export async function saveConnection(
   baseUrl: string,
   token: string,
 ): Promise<RefreshResult> {
-  return previewMode
-    ? previewCardData()
-    : invoke<RefreshResult>("save_connection", { baseUrl, token });
+  if (previewMode) return previewCardData();
+  return invoke<RefreshResult>("save_connection", { baseUrl, token });
 }
 
 export async function fitWindowToContent(
@@ -75,6 +87,7 @@ export async function fitWindowToContent(
 
 export async function saveCardWidth(width: number): Promise<void> {
   if (previewMode) {
+    const { previewSnapshot } = await loadPreviewModule();
     previewSnapshot.card_width = width;
   } else {
     await invoke("save_card_width", { width });
