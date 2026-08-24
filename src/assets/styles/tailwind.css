@@ -134,6 +134,7 @@ body {
   background: color-mix(in oklab, var(--color-base-100) 72%, transparent);
   opacity: 0;
   pointer-events: none;
+  backdrop-filter: blur(0.75rem);
   transition: opacity 120ms ease-out;
 }
 
