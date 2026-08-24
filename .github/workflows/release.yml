@@ -195,6 +195,64 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: 为附件增加平台与架构名称
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '.assets[] | [.id, .name] | @tsv' |
+          while IFS=$'\t' read -r asset_id asset_name; do
+            case "$asset_name" in
+              "Subcard_${TAG}_x64-setup.exe" | "Subcard_${TAG}_windows_x86_64_setup.exe")
+                new_name="Subcard_${TAG}_windows_x86_64_setup.exe"
+                label="Windows x64 installer (recommended)"
+                ;;
+              "Subcard_${TAG}_x64_en-US.msi" | "Subcard_${TAG}_windows_x86_64.msi")
+                new_name="Subcard_${TAG}_windows_x86_64.msi"
+                label="Windows x64 MSI installer"
+                ;;
+              "Subcard_${TAG}_amd64.AppImage" | "Subcard_${TAG}_linux_x86_64.AppImage")
+                new_name="Subcard_${TAG}_linux_x86_64.AppImage"
+                label="Linux x86_64 AppImage"
+                ;;
+              "Subcard_${TAG}_amd64.deb" | "Subcard_${TAG}_linux_x86_64.deb")
+                new_name="Subcard_${TAG}_linux_x86_64.deb"
+                label="Linux x86_64 Debian package"
+                ;;
+              "Subcard-${TAG}-1.x86_64.rpm" | "Subcard_${TAG}_linux_x86_64.rpm")
+                new_name="Subcard_${TAG}_linux_x86_64.rpm"
+                label="Linux x86_64 RPM package"
+                ;;
+              "Subcard_${TAG}_aarch64.dmg" | "Subcard_${TAG}_macos_apple-silicon_aarch64.dmg")
+                new_name="Subcard_${TAG}_macos_apple-silicon_aarch64.dmg"
+                label="macOS Apple Silicon DMG"
+                ;;
+              "Subcard_${TAG}_aarch64.app.tar.gz" | "Subcard_${TAG}_macos_apple-silicon_aarch64.app.tar.gz")
+                new_name="Subcard_${TAG}_macos_apple-silicon_aarch64.app.tar.gz"
+                label="macOS Apple Silicon app archive"
+                ;;
+              "Subcard_${TAG}_x64.dmg" | "Subcard_${TAG}_macos_intel_x86_64.dmg")
+                new_name="Subcard_${TAG}_macos_intel_x86_64.dmg"
+                label="macOS Intel DMG"
+                ;;
+              "Subcard_${TAG}_x64.app.tar.gz" | "Subcard_${TAG}_macos_intel_x86_64.app.tar.gz")
+                new_name="Subcard_${TAG}_macos_intel_x86_64.app.tar.gz"
+                label="macOS Intel app archive"
+                ;;
+              *)
+                echo "::error::无法识别 Release 附件名称：${asset_name}"
+                exit 1
+                ;;
+            esac
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              -f name="$new_name" \
+              -f label="$label" >/dev/null
+          done
+
       - name: 发布已完成构建的 Release
         env:
           GH_TOKEN: ${{ github.token }}
