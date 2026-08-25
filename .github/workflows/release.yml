@@ -196,13 +196,23 @@ jobs:
       contents: write
     steps:
       - name: 为附件增加平台与架构名称
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+          release_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${TAG}\") | .id"
+          )"
+          if [[ -z "$release_id" ]]; then
+            echo "::error::找不到待发布的草稿 Release：${TAG}"
+            exit 1
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
             --jq '.assets[] | [.id, .name] | @tsv' |
           while IFS=$'\t' read -r asset_id asset_name; do
             case "$asset_name" in
@@ -256,5 +266,12 @@ jobs:
       - name: 发布已完成构建的 Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: gh release edit "$TAG" --draft=false --title "Subcard $TAG" --repo "$GITHUB_REPOSITORY"
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F draft=false \
+            -f name="Subcard ${TAG}" >/dev/null
