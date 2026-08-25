@@ -115,6 +115,7 @@ body {
   height: 10rem;
   align-items: center;
   transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .tray-switch-zone-left {
@@ -138,7 +139,7 @@ body {
   transition: opacity 120ms ease-out;
 }
 
-.tray-switch-zone:hover .tray-switch {
+.tray-carousel:hover .tray-switch {
   opacity: 0.62;
   pointer-events: auto;
 }
