@@ -315,16 +315,18 @@ fn set_display_mode(app: &AppHandle, mode: DisplayMode) -> Result<bool, String> 
 }
 
 fn position_and_show_window(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
-    window
-        .move_window(Position::TrayCenter)
-        .map_err(|error| format!("定位卡片窗口失败：{error}"))?;
-    align_window_to_work_area_right_edge(window)?;
+    if let Err(error) = window.move_window(Position::TrayCenter) {
+        eprintln!("[subcard] tray position unavailable, using window fallback: {error}");
+    }
+    if let Err(error) = align_window_to_work_area_right_edge(window) {
+        eprintln!("[subcard] work-area alignment failed: {error}");
+    }
     window
         .show()
         .map_err(|error| format!("显示卡片窗口失败：{error}"))?;
-    window
-        .set_focus()
-        .map_err(|error| format!("聚焦卡片窗口失败：{error}"))?;
+    if let Err(error) = window.set_focus() {
+        eprintln!("[subcard] window focus failed: {error}");
+    }
     app.emit("card-visibility", true)
         .map_err(|error| format!("同步卡片状态失败：{error}"))
 }
@@ -459,6 +461,7 @@ fn queue_window_action(app: &AppHandle, action: WindowAction) {
             }
         };
         if let Err(error) = result {
+            eprintln!("[subcard] window action failed: {error}");
             let _ = app.emit("desktop-error", error);
         }
     }));
