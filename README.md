@@ -4,7 +4,29 @@ Subcard 是 Sub2Pool 的系统托盘参与者卡片。左键单击托盘图标�
 
 完整模式复用 Sub2Pool 的 `ParticipantCard.vue`、Tailwind CSS、daisyUI 主题和额度格式化规则；默认开启的极简模式使用更窄的窗口并隐藏次要信息，左右切换按钮仅在鼠标靠近卡片边缘时显示。
 
-## 首版能力
+### 桌面卡片演示
+<img width="900" height="508" alt="image" src="https://github.com/user-attachments/assets/571ecbdc-1668-4d2e-a6db-aae46f515027" />
+
+
+### 卡片内容演示
+<img width="480" height="214" alt="PixPin_2026-08-25_20-59-49" src="https://github.com/user-attachments/assets/56c30a83-9075-42d1-b4c3-fd34dfa8d713" />
+<img width="480" height="214" alt="PixPin_2026-08-25_20-59-41" src="https://github.com/user-attachments/assets/57a54ba2-ee82-48cd-ace6-8d665531c6d5" />
+
+### 右键菜单演示
+
+<img width="258" height="370" alt="PixPin_2026-08-25_21-04-50" src="https://github.com/user-attachments/assets/3ef06a0a-289f-4584-8dd8-f3fb2a8ccea6" />
+
+### 连接设置演示
+
+<img width="736" height="432" alt="image" src="https://github.com/user-attachments/assets/172ff958-f42b-4af4-9a7c-813561471a6d" />
+
+### 应用建议演示
+
+
+<img width="480" height="214" alt="PixPin_2026-08-25_20-59-34(1)" src="https://github.com/user-attachments/assets/ae8db06a-0190-4ec1-b5d2-a7c85f0ea08d" />
+<img width="480" height="214" alt="PixPin_2026-08-25_20-59-59(1)" src="https://github.com/user-attachments/assets/bf07de7e-28e7-46dc-8f1f-a3a7a8ad33a5" />
+
+## 能力
 
 - 支持管理员和系统用户 API Key；系统用户只显示管理员授权的参与者，并且不能应用建议
 - 管理员 Key 对首页待应用建议显示“应用建议”，并调用 `/api/v1/recommendations/{participant_id}/apply`
@@ -43,3 +65,11 @@ Release 只能通过 GitHub Actions 中的“手动发布 Release”工作流手
 ## 开源协议
 
 Subcard 采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）发布。
+
+## 原项目
+
+[Sub2Pool拼车额度建议专业工具](https://github.com/LingyeNBird/Sub2Pool)
+
+## 友链
+
+[Linuxdo](https://linux.do/)
