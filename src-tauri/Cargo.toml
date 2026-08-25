@@ -1,6 +1,6 @@
 [package]
 name = "subcard"
-version = "0.2.2"
+version = "0.2.3"
 description = "Subcard, a compact Sub2Pool participant quota card for the system tray"
 authors = ["LingyeNBird"]
 edition = "2021"
